@@ -1,0 +1,104 @@
+// VideoCast's Cast receiver: Google's player (CAF) with a faster start, a quiet idle screen and
+// diagnostics sent back to the Mac. VideoCast loads media with the same LOAD/SEEK messages as on the
+// Default Media Receiver, so nothing changes on the sender side.
+
+const NAMESPACE = "urn:x-cast:com.videocast";
+const RECEIVER_VERSION = "1";
+const STATS_EVERY_MS = 10000;
+
+const context = cast.framework.CastReceiverContext.getInstance();
+const player = context.getPlayerManager();
+const logger = cast.debug.CastDebugLogger.getInstance();
+const idle = document.getElementById("idle");
+const idleDetail = document.getElementById("idle-detail");
+
+// Start playing once a few seconds are buffered (the default waits far longer on HLS).
+const playback = new cast.framework.PlaybackConfig();
+playback.autoResumeDuration = 2;
+playback.autoPauseDuration = 1;
+playback.initialBandwidth = 8000000;
+
+const options = new cast.framework.CastReceiverOptions();
+options.playbackConfig = playback;
+options.customNamespaces = { [NAMESPACE]: cast.framework.system.MessageType.JSON };
+options.disableIdleTimeout = false;
+options.maxInactivity = 3600;
+
+// MARK: Messages to the Mac
+
+/** Sends to every connected sender (VideoCast is normally the only one). */
+function report(type, data) {
+  try {
+    context.sendCustomMessage(NAMESPACE, undefined, { type, time: Date.now(), ...data });
+  } catch (error) {
+    // No sender connected (e.g. the Mac is asleep): nothing to tell.
+  }
+}
+
+function snapshot() {
+  const stats = player.getStats ? player.getStats() : {};
+  const media = player.getMediaInformation();
+  return {
+    state: player.getPlayerState(),
+    position: Math.round(player.getCurrentTimeSec() * 10) / 10,
+    duration: media ? media.duration : null,
+    droppedFrames: stats.droppedFrames,
+    decodedFrames: stats.decodedFrames,
+    bufferingTime: stats.bufferingTime,
+    playTime: stats.playTime,
+    width: stats.width,
+    height: stats.height,
+    bandwidth: stats.estimatedBandwidth,
+  };
+}
+
+setInterval(() => {
+  if (player.getPlayerState() !== cast.framework.messages.PlayerState.IDLE) report("stats", snapshot());
+}, STATS_EVERY_MS);
+
+const Event = cast.framework.events.EventType;
+for (const type of [Event.BUFFERING, Event.ERROR, Event.MEDIA_FINISHED, Event.SEEKING, Event.SEEKED, Event.REQUEST_LOAD]) {
+  player.addEventListener(type, (event) => {
+    const detail = {};
+    if (event.isBuffering !== undefined) detail.buffering = event.isBuffering;
+    if (event.detailedErrorCode !== undefined) detail.error = event.detailedErrorCode;
+    if (event.error) detail.reason = String(event.error.reason || event.error);
+    if (event.currentMediaTime !== undefined) detail.mediaTime = event.currentMediaTime;
+    report("event", { event: type, ...detail, ...snapshot() });
+  });
+}
+
+// MARK: Idle screen
+
+player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => idle.classList.add("hidden"));
+player.addEventListener(Event.MEDIA_FINISHED, () => {
+  idleDetail.textContent = "";
+  idle.classList.remove("hidden");
+});
+player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
+  const title = request.media && request.media.metadata && request.media.metadata.title;
+  idleDetail.textContent = title ? `${title}…` : "";
+  // A picture (VideoCast's preview frame) shows on the player itself.
+  if (request.media && /^image\//.test(request.media.contentType || "")) idle.classList.add("hidden");
+  return request;
+});
+
+// MARK: Commands from the Mac
+
+context.addCustomMessageListener(NAMESPACE, (message) => {
+  const data = message.data || {};
+  switch (data.type) {
+    case "debug":
+      // On-screen log of everything the player does, for looking at problems on the TV itself.
+      logger.setEnabled(Boolean(data.on));
+      logger.showDebugLogs(Boolean(data.on));
+      report("debug", { on: Boolean(data.on) });
+      break;
+    case "ping":
+      report("pong", { version: RECEIVER_VERSION, ...snapshot() });
+      break;
+  }
+});
+
+context.addEventListener(cast.framework.system.EventType.READY, () => report("ready", { version: RECEIVER_VERSION }));
+context.start(options);
