@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "6";
+const RECEIVER_VERSION = "7";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -145,13 +145,26 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PLAY, (request)
 // MARK: Holding ‖ fast-forwards
 
 // The first ‖ pauses as usual. Held on, the remote repeats it ~3 times a second: after about a second each
-// repeat adds 10 s, shown on screen, and on release the film jumps there once (a converted stream restarts on
-// every seek, so not on each repeat) and stays paused; ▶ goes on from there.
+// repeat adds time, faster the longer it's held (5 s, then 10 s after 3 s, then 20 s after 8 s), shown on
+// screen. On release the film jumps there once (a converted stream restarts on every seek, so not on each
+// repeat) and plays on. Held past the end, VideoCast goes on to the next episode, or near the end of a film.
 const HOLD_REPEATS_BEFORE_SEEKING = 3;
 let pauseRepeats = 0;
 let lastPause = 0;
+let holdStarted = 0;
 let holdSeconds = 0;
 let holdTimer = null;
+
+function holdStep(heldFor) {
+  if (heldFor < 3000) return 5;
+  if (heldFor < 8000) return 10;
+  return 20;
+}
+
+function formatSkip(seconds) {
+  if (seconds < 60) return `+${seconds} s`;
+  return `+${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
 
 player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request) => {
   const now = Date.now();
@@ -160,19 +173,26 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request
   if (!repeating) {
     pauseRepeats = 0;
     holdSeconds = 0;
+    holdStarted = now;
     return request;
   }
   pauseRepeats += 1;
   if (pauseRepeats > HOLD_REPEATS_BEFORE_SEEKING) {
-    holdSeconds += 10;
-    showPrompt(`⏩ +${holdSeconds} s`);
+    holdSeconds += holdStep(now - holdStarted);
+    showPrompt(`⏩ ${formatSkip(holdSeconds)}`);
     clearTimeout(holdTimer);
     holdTimer = setTimeout(() => {
+      const media = player.getMediaInformation();
+      const duration = media && media.duration;
       const target = player.getCurrentTimeSec() + holdSeconds;
-      report("remote", { action: "fast-forward", seconds: holdSeconds, to: target });
-      player.seek(target);
+      const pastEnd = Boolean(duration) && target >= duration - 3;
+      report("remote", { action: "fast-forward", seconds: holdSeconds, to: target, pastEnd });
       holdSeconds = 0;
       setTimeout(() => showPrompt(null), 800);
+      // Past the end VideoCast decides: the next episode, or near the end of a film.
+      if (pastEnd) return;
+      player.seek(target);
+      player.play();
     }, 700);
   }
   return null;
