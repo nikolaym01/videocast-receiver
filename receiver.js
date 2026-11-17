@@ -383,7 +383,7 @@ player.addEventListener(Event.PAUSE, () => { if (!startPaused) loaded("paused");
 
 // Resuming mid-film, CAF starts playing at once and only then seeks there: the old Chromecast played the sound
 // ~2 s before the first picture (2026-11-18). So such a load starts paused and plays once the seek is done and
-// the picture can play; at worst after 4 s.
+// the picture can play (SEEKED); at worst after 4 s.
 let startPaused = false;
 let startTimer = null;
 function startNow(why) {
@@ -393,7 +393,7 @@ function startNow(why) {
   report("event", { event: "START_AFTER_SEEK", why, mediaTime: player.getCurrentTimeSec() });
   player.play();
 }
-player.addEventListener(Event.CAN_PLAY, () => { if (startPaused) setTimeout(() => startNow("canplay"), 100); });
+player.addEventListener(Event.SEEKED, () => { if (startPaused) setTimeout(() => startNow("seeked"), 100); });
 player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => {
   if (startPaused) startTimer = setTimeout(() => startNow("timeout"), 4000);
 });
