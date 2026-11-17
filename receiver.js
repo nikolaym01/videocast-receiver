@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "18";
+const RECEIVER_VERSION = "19";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -333,9 +333,9 @@ function showHome() {
   idle.className = "mode-home";
 }
 
-function showLoading(title, startTime) {
+function showLoading(title, startTime, detail) {
   loadingTitle.textContent = title || "";
-  loadingDetail.textContent = startTime > 1 ? `Resuming at ${clock(startTime)}` : "Starting…";
+  loadingDetail.textContent = detail || (startTime > 1 ? `Resuming at ${clock(startTime)}` : "Starting…");
   backdrop.style.backgroundImage = thumbnails ? `url("${thumbnails}t${Math.round((startTime > 1 ? startTime : 60) / 5) * 5}.jpg")` : "";
   idle.className = "mode-loading";
 }
@@ -379,27 +379,35 @@ function checkMoving() {
 player.addEventListener(Event.TIME_UPDATE, checkMoving);
 setInterval(checkMoving, 250);
 // Loaded paused, nothing moves by itself: show the player.
-player.addEventListener(Event.PAUSE, () => { if (!startPaused) loaded("paused"); });
+player.addEventListener(Event.PAUSE, () => { if (!startPaused && !showingPicture) loaded("paused"); });
 
 // Resuming mid-film, CAF starts playing at once and only then seeks there: the old Chromecast played the sound
-// ~2 s before the first picture (2026-11-18). So such a load starts paused and plays once the seek is done and
-// the picture can play (SEEKED); at worst after 4 s.
+// ~2 s before the first picture (2026-11-18). So such a load starts paused; once the seek is done (SEEKED; at
+// worst after 4 s) the loading screen goes, the frame at the spot shows, and then it plays.
 let startPaused = false;
 let startTimer = null;
+let showingPicture = false;
 function startNow(why) {
   if (!startPaused) return;
   startPaused = false;
   clearTimeout(startTimer);
   report("event", { event: "START_AFTER_SEEK", why, mediaTime: player.getCurrentTimeSec() });
-  player.play();
+  // The picture first: the paused frame at the spot shows, then it plays (by ear the sound still led by 1–2 s
+  // when the screen waited for the time to move).
+  loaded("seeked");
+  setTimeout(() => player.play(), 400);
 }
 player.addEventListener(Event.SEEKED, () => { if (startPaused) setTimeout(() => startNow("seeked"), 100); });
 player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => {
   if (startPaused) startTimer = setTimeout(() => startNow("timeout"), 4000);
 });
 // Never stuck behind the loading screen.
-player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => setTimeout(() => loaded("timeout"), 15000));
-player.addEventListener(Event.MEDIA_FINISHED, showHome);
+player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => setTimeout(() => { if (!showingPicture) loaded("timeout"); }, 15000));
+// Only a real end: replacing the media (VideoCast's preview picture by the stream) "finishes" it too.
+player.addEventListener(Event.MEDIA_FINISHED, (event) => {
+  if (event && event.endedReason && event.endedReason !== "END_OF_STREAM") return;
+  showHome();
+});
 player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
   showPrompt(null);
   const custom = request.media && request.media.customData;
@@ -410,12 +418,11 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request)
   startPaused = (request.currentTime || 0) > 1 && request.autoplay !== false;
   if (startPaused) request.autoplay = false;
   const title = request.media && request.media.metadata && request.media.metadata.title;
-  // A picture (VideoCast's preview frame while converting) shows on the player itself.
-  if (request.media && /^image\//.test(request.media.contentType || "")) {
-    idle.classList.add("hidden");
-  } else {
-    showLoading(title, request.currentTime || 0);
-  }
+  // A picture is VideoCast's stand-in while it converts the film: our loading screen says so instead, until the
+  // stream comes.
+  showingPicture = Boolean(request.media && /^image\//.test(request.media.contentType || ""));
+  if (showingPicture) startPaused = false;
+  showLoading(title, request.currentTime || 0, showingPicture ? "Preparing…" : null);
   return request;
 });
 
