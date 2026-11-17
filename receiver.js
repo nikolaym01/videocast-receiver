@@ -3,15 +3,14 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "9";
+const RECEIVER_VERSION = "10";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
 const player = context.getPlayerManager();
 const logger = cast.debug.CastDebugLogger.getInstance();
 const idle = document.getElementById("idle");
-const idleDetail = document.getElementById("idle-detail");
-document.getElementById("version").textContent = `r${RECEIVER_VERSION}`;
+
 
 // Start playing once a few seconds are buffered (the default waits far longer on HLS).
 const playback = new cast.framework.PlaybackConfig();
@@ -254,21 +253,54 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request
   return null;
 });
 
-// MARK: Idle screen
+// MARK: Idle and loading screens
 
+// Built here rather than in index.html, which the Chromecast caches: "home" (the app's icon and name, drifting a
+// little every 30 s so a screen left on doesn't burn in) and "loading" (a dimmed frame from where the film will
+// start, its title and what's happening, with a running line).
+idle.innerHTML = `
+  <div class="home"><img class="logo" src="icon.png?v=${RECEIVER_VERSION}" alt=""><div class="name">VideoCast</div></div>
+  <div class="loading">
+    <div class="backdrop"></div>
+    <div class="caption"><div class="title"></div><div class="detail"></div><div class="running"><div></div></div></div>
+  </div>
+  <div id="version">r${RECEIVER_VERSION}</div>`;
+const home = idle.querySelector(".home");
+const backdrop = idle.querySelector(".backdrop");
+const loadingTitle = idle.querySelector(".title");
+const loadingDetail = idle.querySelector(".detail");
+
+function showHome() {
+  idle.className = "mode-home";
+}
+
+function showLoading(title, startTime) {
+  loadingTitle.textContent = title || "";
+  loadingDetail.textContent = startTime > 1 ? `Resuming at ${clock(startTime)}` : "Starting…";
+  backdrop.style.backgroundImage = thumbnails ? `url("${thumbnails}t${Math.round((startTime > 1 ? startTime : 60) / 5) * 5}.jpg")` : "";
+  idle.className = "mode-loading";
+}
+
+setInterval(() => {
+  const x = Math.round((Math.random() - 0.5) * 60);
+  const y = Math.round((Math.random() - 0.5) * 40);
+  home.style.transform = `translate(${x}px, ${y}px)`;
+}, 30000);
+
+showHome();
 player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => idle.classList.add("hidden"));
-player.addEventListener(Event.MEDIA_FINISHED, () => {
-  idleDetail.textContent = "";
-  idle.classList.remove("hidden");
-});
+player.addEventListener(Event.MEDIA_FINISHED, showHome);
 player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
   showPrompt(null);
   const custom = request.media && request.media.customData;
   thumbnails = (custom && custom.thumbnails) || null;
   const title = request.media && request.media.metadata && request.media.metadata.title;
-  idleDetail.textContent = title ? `${title}…` : "";
-  // A picture (VideoCast's preview frame) shows on the player itself.
-  if (request.media && /^image\//.test(request.media.contentType || "")) idle.classList.add("hidden");
+  // A picture (VideoCast's preview frame while converting) shows on the player itself.
+  if (request.media && /^image\//.test(request.media.contentType || "")) {
+    idle.classList.add("hidden");
+  } else {
+    showLoading(title, request.currentTime || 0);
+  }
   return request;
 });
 

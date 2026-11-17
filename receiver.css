@@ -20,12 +20,8 @@ cast-media-player {
 #idle {
   position: absolute;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
   background: #000;
-  transition: opacity 0.4s;
+  transition: opacity 0.5s;
 }
 
 #idle.hidden {
@@ -33,11 +29,94 @@ cast-media-player {
   pointer-events: none;
 }
 
-#idle .mark {
-  font-size: 44px;
+#idle .home,
+#idle .loading {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+
+#idle.mode-home .home,
+#idle.mode-loading .loading {
+  opacity: 1;
+}
+
+#idle .home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  transition: opacity 0.5s, transform 8s ease-in-out;
+}
+
+#idle .logo {
+  width: 168px;
+  height: 168px;
+  opacity: 0.85;
+}
+
+#idle .name {
+  font-family: "Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 34px;
   font-weight: 300;
-  letter-spacing: 2px;
-  color: #888;
+  letter-spacing: 3px;
+  color: #8a8a8a;
+}
+
+#idle .backdrop {
+  position: absolute;
+  inset: -20px;
+  background-size: cover;
+  background-position: center;
+  filter: blur(3px) brightness(0.4);
+}
+
+#idle .caption {
+  position: absolute;
+  left: 96px;
+  right: 96px;
+  bottom: 96px;
+  font-family: "Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+#idle .title {
+  font-size: 54px;
+  font-weight: 500;
+  color: #f2f2f2;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+
+#idle .detail {
+  margin-top: 10px;
+  font-size: 26px;
+  color: #c8c8c8;
+}
+
+#idle .running {
+  position: relative;
+  width: 320px;
+  height: 3px;
+  margin-top: 26px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+#idle .running div {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 30%;
+  border-radius: 2px;
+  background: #f2f2f2;
+  animation: running 1.4s ease-in-out infinite;
+}
+
+@keyframes running {
+  from { left: -30%; }
+  to { left: 100%; }
 }
 
 /* Which receiver the TV loaded, for checking after an update. */
@@ -47,12 +126,6 @@ cast-media-player {
   bottom: 20px;
   font-size: 16px;
   color: #333;
-}
-
-#idle-detail {
-  margin-top: 14px;
-  font-size: 22px;
-  color: #666;
 }
 
 /* Fast-forward with ‖ held: the film's timeline, where it will land and a frame from there. */
