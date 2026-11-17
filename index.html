@@ -3,7 +3,6 @@
 <head>
   <meta charset="utf-8">
   <title>VideoCast</title>
-  <link rel="stylesheet" href="receiver.css?v=8">
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <script src="https://www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
 </head>
@@ -20,6 +19,21 @@
     <div id="seek-times"></div>
     <div id="seek-track"><div id="seek-played"></div><div id="seek-target"></div></div>
   </div>
-  <script src="receiver.js?v=8"></script>
+  <script>
+    // This page is cached by the Chromecast (GitHub Pages allows 10 minutes), so it stays the same and only
+    // loads the current version of the receiver, asked for with a query no cache can answer.
+    fetch("version.json?" + Date.now())
+      .then((reply) => reply.json())
+      .catch(() => ({ version: "8" }))
+      .then(({ version }) => {
+        const style = document.createElement("link");
+        style.rel = "stylesheet";
+        style.href = `receiver.css?v=${version}`;
+        document.head.appendChild(style);
+        const script = document.createElement("script");
+        script.src = `receiver.js?v=${version}`;
+        document.body.appendChild(script);
+      });
+  </script>
 </body>
 </html>
