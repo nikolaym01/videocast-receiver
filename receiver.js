@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "11";
+const RECEIVER_VERSION = "12";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -140,8 +140,54 @@ function showPrompt(text, action) {
   prompt.classList.toggle("shown", Boolean(text));
 }
 
+// MARK: Picking up after a break
+
+// After a long pause, or resuming a film the next day, a few seconds are played again so the scene is fresh
+// (VideoCast steps back on resume, we on unpausing), and a quiet note says so, so it doesn't look like a fault.
+let pausedAt = 0;
+let introEnd = null;
+let noteTimer = null;
+
+function stepBack(pause) {
+  if (pause < 300000) return 0;
+  if (pause < 3600000) return 5;
+  if (pause < 86400000) return 10;
+  return 20;
+}
+
+function showNote(text) {
+  showPrompt(text);
+  clearTimeout(noteTimer);
+  noteTimer = setTimeout(() => {
+    if (!promptAction && prompt.textContent === text) showPrompt(null);
+  }, 3500);
+}
+
+function rewoundNote(seconds) {
+  return `Replaying the last ${seconds} s`;
+}
+
+player.addEventListener(Event.PAUSE, () => { pausedAt = Date.now(); });
+player.addEventListener(Event.PLAYING, () => { pausedAt = 0; });
+
+/** On ▶ after a long pause: step back first. */
+function pickUp() {
+  if (!pausedAt) return;
+  const back = stepBack(Date.now() - pausedAt);
+  pausedAt = 0;
+  const now = player.getCurrentTimeSec();
+  let target = Math.max(0, now - back);
+  if (introEnd !== null && now >= introEnd && target < introEnd - 2) target = Math.min(now, introEnd - 2);
+  const seconds = Math.round(now - target);
+  if (seconds < 1) return;
+  report("remote", { action: "pick-up", seconds });
+  player.seek(target);
+  showNote(rewoundNote(seconds));
+}
+
 player.setMessageInterceptor(cast.framework.messages.MessageType.PLAY, (request) => {
   const state = player.getPlayerState();
+  if (state === cast.framework.messages.PlayerState.PAUSED) pickUp();
   if (state !== cast.framework.messages.PlayerState.PLAYING) return request;
   const now = Date.now();
   if (now - lastGoOn > 1500) {
@@ -301,12 +347,20 @@ setInterval(() => {
 }, 30000);
 
 showHome();
-player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => idle.classList.add("hidden"));
+let rewoundOnLoad = 0;
+player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => {
+  idle.classList.add("hidden");
+  if (rewoundOnLoad) showNote(rewoundNote(rewoundOnLoad));
+  rewoundOnLoad = 0;
+});
 player.addEventListener(Event.MEDIA_FINISHED, showHome);
 player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
   showPrompt(null);
   const custom = request.media && request.media.customData;
   thumbnails = (custom && custom.thumbnails) || null;
+  rewoundOnLoad = (custom && custom.rewound) || 0;
+  introEnd = custom && typeof custom.introEnd === "number" ? custom.introEnd : null;
+  pausedAt = 0;
   const title = request.media && request.media.metadata && request.media.metadata.title;
   // A picture (VideoCast's preview frame while converting) shows on the player itself.
   if (request.media && /^image\//.test(request.media.contentType || "")) {
