@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "15";
+const RECEIVER_VERSION = "16";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -353,8 +353,10 @@ showHome();
 let rewoundOnLoad = 0;
 let loading = false;
 let loadingFrom = null;
-function loaded() {
+function loaded(why) {
+  if (!loading) return;
   loading = false;
+  report("event", { event: "LOADING_SCREEN_HIDDEN", why, mediaTime: player.getCurrentTimeSec() });
   // A cut, not a fade: the old Chromecast redraws the blurred frame in pieces while fading, and the sound has
   // already started.
   idle.classList.add("instant", "hidden");
@@ -364,16 +366,21 @@ function loaded() {
 }
 player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => { loading = true; loadingFrom = null; });
 player.addEventListener(Event.SEEKING, () => { loadingFrom = null; });
-player.addEventListener(Event.TIME_UPDATE, (event) => {
-  if (!loading || player.getPlayerState() !== cast.framework.messages.PlayerState.PLAYING) return;
-  const time = event.currentMediaTime;
+// The player's own clock (the event's field isn't filled on every device), checked on its time updates and
+// four times a second besides; the state isn't checked: sound already plays while CAF still says BUFFERING.
+function checkMoving() {
+  if (!loading) return;
+  const time = player.getCurrentTimeSec();
+  if (typeof time !== "number" || isNaN(time)) return;
   if (loadingFrom === null) loadingFrom = time;
-  else if (time - loadingFrom >= 0.2) loaded();
-});
+  else if (time - loadingFrom >= 0.2) loaded("moving");
+}
+player.addEventListener(Event.TIME_UPDATE, checkMoving);
+setInterval(checkMoving, 250);
 // Loaded paused, nothing moves by itself: show the player.
-player.addEventListener(Event.PAUSE, () => { if (loading) loaded(); });
+player.addEventListener(Event.PAUSE, () => loaded("paused"));
 // Never stuck behind the loading screen.
-player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => setTimeout(() => { if (loading) loaded(); }, 15000));
+player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => setTimeout(() => loaded("timeout"), 15000));
 player.addEventListener(Event.MEDIA_FINISHED, showHome);
 player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
   showPrompt(null);
