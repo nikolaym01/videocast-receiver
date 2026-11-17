@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "16";
+const RECEIVER_VERSION = "17";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -360,6 +360,7 @@ function loaded(why) {
   // A cut, not a fade: the old Chromecast redraws the blurred frame in pieces while fading, and the sound has
   // already started.
   idle.classList.add("instant", "hidden");
+  backdrop.style.backgroundImage = "";
   setTimeout(() => idle.classList.remove("instant"), 100);
   if (rewoundOnLoad) showNote(rewoundNote(rewoundOnLoad));
   rewoundOnLoad = 0;

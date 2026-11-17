@@ -26,9 +26,13 @@ cast-media-player {
   transition: opacity 0.5s;
 }
 
+/* Hidden means out of the picture, not just transparent: the old Chromecast kept painting a transparent layer's
+   stale tiles over the film while it buffered (recording 2026-11-18). */
 #idle.hidden {
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
+  transition: opacity 0.5s, visibility 0s linear 0.5s;
 }
 
 #idle.instant,
@@ -73,12 +77,19 @@ cast-media-player {
   color: #8a8a8a;
 }
 
+/* Dimmed by a plain layer on top, no CSS filter: a blurred full-screen layer is heavy for the old Chromecast. */
 #idle .backdrop {
   position: absolute;
-  inset: -20px;
+  inset: 0;
   background-size: cover;
   background-position: center;
-  filter: blur(3px) brightness(0.4);
+}
+
+#idle .backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
 }
 
 #idle .caption {
