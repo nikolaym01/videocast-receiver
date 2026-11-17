@@ -17,9 +17,11 @@ cast-media-player {
 }
 
 /* Shown until media loads and after it ends, instead of Google's backdrop. */
+/* Above Google's player: its loading bar showed through our screens (recording 2026-11-18). */
 #idle {
   position: absolute;
   inset: 0;
+  z-index: 1000;
   background: #000;
   transition: opacity 0.5s;
 }
@@ -137,6 +139,7 @@ cast-media-player {
 /* Fast-forward with ‖ held: the film's timeline, where it will land and a frame from there. */
 #seekbar {
   position: absolute;
+  z-index: 1001;
   left: 64px;
   right: 64px;
   bottom: 48px;
@@ -216,6 +219,7 @@ cast-media-player.seeking {
 /* "Skip intro", "Next episode": a button-like card at the bottom right, with the remote's ▶ as its key. */
 #prompt {
   position: absolute;
+  z-index: 1001;
   right: 56px;
   bottom: 72px;
   display: flex;
