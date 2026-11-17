@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "13";
+const RECEIVER_VERSION = "14";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -349,13 +349,16 @@ setInterval(() => {
 showHome();
 // The loading screen stays until the picture really moves: resuming, CAF loads from the start, reports PLAYING,
 // then seeks and buffers again, and hiding earlier showed Google's spinner and bar in between. So it goes once the
-// film's time has run on for half a second while playing.
+// film's time has run on for a moment while playing.
 let rewoundOnLoad = 0;
 let loading = false;
 let loadingFrom = null;
 function loaded() {
   loading = false;
-  idle.classList.add("hidden");
+  // A cut, not a fade: the old Chromecast redraws the blurred frame in pieces while fading, and the sound has
+  // already started.
+  idle.classList.add("instant", "hidden");
+  setTimeout(() => idle.classList.remove("instant"), 100);
   if (rewoundOnLoad) showNote(rewoundNote(rewoundOnLoad));
   rewoundOnLoad = 0;
 }
@@ -365,7 +368,7 @@ player.addEventListener(Event.TIME_UPDATE, (event) => {
   if (!loading || player.getPlayerState() !== cast.framework.messages.PlayerState.PLAYING) return;
   const time = event.currentMediaTime;
   if (loadingFrom === null) loadingFrom = time;
-  else if (time - loadingFrom >= 0.5) loaded();
+  else if (time - loadingFrom >= 0.2) loaded();
 });
 // Loaded paused, nothing moves by itself: show the player.
 player.addEventListener(Event.PAUSE, () => { if (loading) loaded(); });

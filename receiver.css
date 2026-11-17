@@ -29,6 +29,12 @@ cast-media-player {
   pointer-events: none;
 }
 
+#idle.instant,
+#idle.instant .home,
+#idle.instant .loading {
+  transition: none;
+}
+
 #idle .home,
 #idle .loading {
   position: absolute;
