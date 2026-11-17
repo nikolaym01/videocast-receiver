@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "5";
+const RECEIVER_VERSION = "6";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -139,6 +139,42 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PLAY, (request)
     showPrompt(null);
   }
   lastGoOn = now;
+  return null;
+});
+
+// MARK: Holding ‖ fast-forwards
+
+// The first ‖ pauses as usual. Held on, the remote repeats it ~3 times a second: after about a second each
+// repeat adds 10 s, shown on screen, and on release the film jumps there once (a converted stream restarts on
+// every seek, so not on each repeat) and stays paused; ▶ goes on from there.
+const HOLD_REPEATS_BEFORE_SEEKING = 3;
+let pauseRepeats = 0;
+let lastPause = 0;
+let holdSeconds = 0;
+let holdTimer = null;
+
+player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request) => {
+  const now = Date.now();
+  const repeating = now - lastPause < 700;
+  lastPause = now;
+  if (!repeating) {
+    pauseRepeats = 0;
+    holdSeconds = 0;
+    return request;
+  }
+  pauseRepeats += 1;
+  if (pauseRepeats > HOLD_REPEATS_BEFORE_SEEKING) {
+    holdSeconds += 10;
+    showPrompt(`⏩ +${holdSeconds} s`);
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      const target = player.getCurrentTimeSec() + holdSeconds;
+      report("remote", { action: "fast-forward", seconds: holdSeconds, to: target });
+      player.seek(target);
+      holdSeconds = 0;
+      setTimeout(() => showPrompt(null), 800);
+    }, 700);
+  }
   return null;
 });
 
