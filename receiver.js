@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "10";
+const RECEIVER_VERSION = "11";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -158,7 +158,8 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PLAY, (request)
 // repeat adds time, faster the longer it's held (5 s, then 10 s after 3 s, then 20 s after 8 s). Meanwhile the
 // screen shows the timeline with where the film will land and a frame from there (VideoCast makes them). On
 // release the film jumps there once (a converted stream restarts on every seek, so not on each repeat) and
-// plays on. Held past the end, it lands on the last seconds, so the end is seen; VideoCast then goes on to
+// plays on, from the frame that was on screen when the button was let go (the time keeps counting while the
+// frame loads, and a release is only noticed when the repeats stop). Held past the end, it lands on the last seconds, so the end is seen; VideoCast then goes on to
 // the next episode as at any end.
 const HOLD_REPEATS_BEFORE_SEEKING = 3;
 const END_SECONDS_SHOWN = 8;
@@ -169,12 +170,15 @@ let holdSeconds = 0;
 let holdTimer = null;
 let frameTimer = null;
 let thumbnails = null;
+let frameTime = null;   // the film time of the frame on screen
 
 const seekbar = document.getElementById("seekbar");
 const seekFrame = document.getElementById("seek-frame");
 const seekTimes = document.getElementById("seek-times");
 const seekPlayed = document.getElementById("seek-played");
 const seekTarget = document.getElementById("seek-target");
+const castPlayer = document.querySelector("cast-media-player");
+seekFrame.addEventListener("load", () => { frameTime = Number(seekFrame.dataset.time); });
 
 function holdStep(heldFor) {
   if (heldFor < 3000) return 5;
@@ -210,12 +214,16 @@ function showSeekbar(seconds) {
     seekFrame.style.left = `${Math.min(Math.max((target / duration) * 100, 12), 88)}%`;
   }
   seekbar.classList.add("shown");
-  // A frame from there, at most twice a second, rounded to 5 s so they're reused.
+  // Google's own paused bar would show under ours.
+  castPlayer.classList.add("seeking");
+  // A frame from there, at most four times a second, rounded to 5 s so they're reused.
   if (thumbnails && !frameTimer) {
     frameTimer = setTimeout(() => {
       frameTimer = null;
-      seekFrame.src = `${thumbnails}t${Math.round(landing(holdSeconds) / 5) * 5}.jpg`;
-    }, 400);
+      const time = Math.round(landing(holdSeconds) / 5) * 5;
+      seekFrame.dataset.time = time;
+      seekFrame.src = `${thumbnails}t${time}.jpg`;
+    }, 250);
   }
 }
 
@@ -223,7 +231,11 @@ function hideSeekbar() {
   seekbar.classList.remove("shown");
   clearTimeout(frameTimer);
   frameTimer = null;
-  setTimeout(() => seekFrame.removeAttribute("src"), 300);
+  frameTime = null;
+  setTimeout(() => {
+    seekFrame.removeAttribute("src");
+    castPlayer.classList.remove("seeking");
+  }, 300);
 }
 
 player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request) => {
@@ -242,13 +254,14 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request
     showSeekbar(holdSeconds);
     clearTimeout(holdTimer);
     holdTimer = setTimeout(() => {
-      const target = landing(holdSeconds);
+      const seen = frameTime !== null && frameTime > player.getCurrentTimeSec() ? frameTime : null;
+      const target = seen !== null ? Math.min(seen, landing(holdSeconds)) : landing(holdSeconds);
       report("remote", { action: "fast-forward", seconds: holdSeconds, to: target });
       holdSeconds = 0;
       player.seek(target);
       player.play();
       setTimeout(hideSeekbar, 600);
-    }, 700);
+    }, 550);
   }
   return null;
 });

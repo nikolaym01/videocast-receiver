@@ -143,6 +143,22 @@ cast-media-player {
   opacity: 1;
 }
 
+/* Darkens the bottom of the screen, where Google's paused overlay sits. */
+#seekbar::before {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 300px;
+  z-index: -1;
+  background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.92) 55%);
+}
+
+cast-media-player.seeking {
+  --progress-color: transparent;
+}
+
 #seek-frame {
   position: absolute;
   bottom: 54px;
