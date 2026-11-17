@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "2";
+const RECEIVER_VERSION = "3";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -69,6 +69,23 @@ for (const type of [Event.BUFFERING, Event.ERROR, Event.MEDIA_FINISHED, Event.SE
 }
 
 // MARK: Remote control scanner
+
+// The TV's remote reaches the player through HDMI-CEC as media commands; skip buttons arrive only if the
+// player says it handles a queue (next/previous), so claim it and report what comes.
+const Command = cast.framework.messages.Command;
+player.setSupportedMediaCommands(
+  Command.ALL_BASIC_MEDIA | Command.QUEUE_NEXT | Command.QUEUE_PREV | Command.SEEK | Command.STREAM_VOLUME,
+  true,
+);
+for (const type of ["QUEUE_UPDATE", "QUEUE_NEXT", "QUEUE_PREV", "SKIP_AD", "SEEK", "STOP"]) {
+  const messageType = cast.framework.messages.MessageType[type];
+  if (!messageType) continue;
+  player.setMessageInterceptor(messageType, (request) => {
+    report("command", { command: type, data: JSON.stringify(request).slice(0, 200) });
+    // Nothing queued yet: answer skips without doing anything, the rest as usual.
+    return type.startsWith("QUEUE") ? null : request;
+  });
+}
 
 // Everything a remote can reach the player with: media requests (from VideoCast, from the TV over HDMI-CEC,
 // from Google Home) with who sent them, and raw key presses on the page. Reported to the Mac, so we can see
