@@ -118,23 +118,48 @@ cast-media-player {
   background: #4a90d9;
 }
 
-/* "Next episode — press ▶": bottom right, over the film. */
+/* "Skip intro", "Next episode": a button-like card at the bottom right, with the remote's ▶ as its key. */
 #prompt {
   position: absolute;
-  right: 48px;
-  bottom: 64px;
-  padding: 14px 22px;
+  right: 56px;
+  bottom: 72px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 26px 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 10px;
-  background: rgba(20, 20, 20, 0.82);
-  color: #eee;
-  font-size: 26px;
+  background: rgba(12, 12, 12, 0.72);
+  color: #f2f2f2;
+  font-family: "Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 25px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
   opacity: 0;
-  transform: translateY(12px);
-  transition: opacity 0.3s, transform 0.3s;
+  transform: translateX(24px);
+  transition: opacity 0.35s, transform 0.35s;
   pointer-events: none;
 }
 
 #prompt.shown {
   opacity: 1;
   transform: none;
+}
+
+#prompt .key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #f2f2f2;
+  color: #111;
+  font-size: 15px;
+  padding-left: 3px;
+  box-sizing: border-box;
+}
+
+#prompt.plain {
+  padding: 12px 24px;
 }

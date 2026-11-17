@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "8";
+const RECEIVER_VERSION = "9";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -124,9 +124,20 @@ const prompt = document.getElementById("prompt");
 let promptAction = null;
 let lastGoOn = 0;
 
+/** A prompt with an action shows the remote's ▶ as its key; one without (e.g. a note) is plain text. */
 function showPrompt(text, action) {
   promptAction = text ? action || null : null;
-  prompt.textContent = text || "";
+  prompt.replaceChildren();
+  if (text) {
+    if (promptAction) {
+      const key = document.createElement("span");
+      key.className = "key";
+      key.textContent = "▶";
+      prompt.append(key);
+    }
+    prompt.append(document.createTextNode(text));
+  }
+  prompt.classList.toggle("plain", !promptAction);
   prompt.classList.toggle("shown", Boolean(text));
 }
 
