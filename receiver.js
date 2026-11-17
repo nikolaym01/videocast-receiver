@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "1";
+const RECEIVER_VERSION = "2";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -66,6 +66,25 @@ for (const type of [Event.BUFFERING, Event.ERROR, Event.MEDIA_FINISHED, Event.SE
     if (event.currentMediaTime !== undefined) detail.mediaTime = event.currentMediaTime;
     report("event", { event: type, ...detail, ...snapshot() });
   });
+}
+
+// MARK: Remote control scanner
+
+// Everything a remote can reach the player with: media requests (from VideoCast, from the TV over HDMI-CEC,
+// from Google Home) with who sent them, and raw key presses on the page. Reported to the Mac, so we can see
+// which buttons of the TV's remote arrive at all.
+const Category = cast.framework.events.category;
+player.addEventListener(Category.REQUEST, (event) => {
+  report("request", {
+    request: event.type,
+    sender: event.senderId || null,
+    data: event.requestData ? JSON.stringify(event.requestData).slice(0, 200) : null,
+  });
+});
+for (const kind of ["keydown", "keyup"]) {
+  document.addEventListener(kind, (event) => {
+    report("key", { kind, key: event.key, code: event.code, keyCode: event.keyCode });
+  }, true);
 }
 
 // MARK: Idle screen
