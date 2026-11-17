@@ -40,8 +40,38 @@ cast-media-player {
   color: #888;
 }
 
+/* Which receiver the TV loaded, for checking after an update. */
+#version {
+  position: absolute;
+  right: 28px;
+  bottom: 20px;
+  font-size: 16px;
+  color: #333;
+}
+
 #idle-detail {
   margin-top: 14px;
   font-size: 22px;
   color: #666;
+}
+
+/* "Next episode — press ▶": bottom right, over the film. */
+#prompt {
+  position: absolute;
+  right: 48px;
+  bottom: 64px;
+  padding: 14px 22px;
+  border-radius: 10px;
+  background: rgba(20, 20, 20, 0.82);
+  color: #eee;
+  font-size: 26px;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+}
+
+#prompt.shown {
+  opacity: 1;
+  transform: none;
 }

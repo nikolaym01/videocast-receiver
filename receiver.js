@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "4";
+const RECEIVER_VERSION = "5";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -11,6 +11,7 @@ const player = context.getPlayerManager();
 const logger = cast.debug.CastDebugLogger.getInstance();
 const idle = document.getElementById("idle");
 const idleDetail = document.getElementById("idle-detail");
+document.getElementById("version").textContent = `r${RECEIVER_VERSION}`;
 
 // Start playing once a few seconds are buffered (the default waits far longer on HLS).
 const playback = new cast.framework.PlaybackConfig();
@@ -114,6 +115,33 @@ for (const kind of ["keydown", "keyup"]) {
   }, true);
 }
 
+// MARK: ▶ on the TV remote while playing
+
+// The TV's remote reaches us only with ▶ ‖ ■ (HDMI-CEC). ▶ while already playing means "go on": do what the
+// prompt on screen says, or, without a prompt, let VideoCast play the next episode. Holding the button repeats
+// it every ~0.3 s, so presses within 1.5 s count once. On pause, ▶ resumes as usual.
+const prompt = document.getElementById("prompt");
+let promptAction = null;
+let lastGoOn = 0;
+
+function showPrompt(text, action) {
+  promptAction = text ? action || null : null;
+  prompt.textContent = text || "";
+  prompt.classList.toggle("shown", Boolean(text));
+}
+
+player.setMessageInterceptor(cast.framework.messages.MessageType.PLAY, (request) => {
+  const state = player.getPlayerState();
+  if (state !== cast.framework.messages.PlayerState.PLAYING) return request;
+  const now = Date.now();
+  if (now - lastGoOn > 1500) {
+    report("remote", { action: promptAction || "next", prompted: Boolean(promptAction) });
+    showPrompt(null);
+  }
+  lastGoOn = now;
+  return null;
+});
+
 // MARK: Idle screen
 
 player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => idle.classList.add("hidden"));
@@ -122,6 +150,7 @@ player.addEventListener(Event.MEDIA_FINISHED, () => {
   idle.classList.remove("hidden");
 });
 player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
+  showPrompt(null);
   const title = request.media && request.media.metadata && request.media.metadata.title;
   idleDetail.textContent = title ? `${title}…` : "";
   // A picture (VideoCast's preview frame) shows on the player itself.
@@ -139,6 +168,10 @@ context.addCustomMessageListener(NAMESPACE, (message) => {
       logger.setEnabled(Boolean(data.on));
       logger.showDebugLogs(Boolean(data.on));
       report("debug", { on: Boolean(data.on) });
+      break;
+    case "prompt":
+      // E.g. {text: "Next episode — press ▶", action: "next"}; no text hides it.
+      showPrompt(data.text, data.action);
       break;
     case "ping":
       report("pong", { version: RECEIVER_VERSION, ...snapshot() });
