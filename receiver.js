@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "12";
+const RECEIVER_VERSION = "13";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -347,12 +347,30 @@ setInterval(() => {
 }, 30000);
 
 showHome();
+// The loading screen stays until the picture really moves: resuming, CAF loads from the start, reports PLAYING,
+// then seeks and buffers again, and hiding earlier showed Google's spinner and bar in between. So it goes once the
+// film's time has run on for half a second while playing.
 let rewoundOnLoad = 0;
-player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => {
+let loading = false;
+let loadingFrom = null;
+function loaded() {
+  loading = false;
   idle.classList.add("hidden");
   if (rewoundOnLoad) showNote(rewoundNote(rewoundOnLoad));
   rewoundOnLoad = 0;
+}
+player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => { loading = true; loadingFrom = null; });
+player.addEventListener(Event.SEEKING, () => { loadingFrom = null; });
+player.addEventListener(Event.TIME_UPDATE, (event) => {
+  if (!loading || player.getPlayerState() !== cast.framework.messages.PlayerState.PLAYING) return;
+  const time = event.currentMediaTime;
+  if (loadingFrom === null) loadingFrom = time;
+  else if (time - loadingFrom >= 0.5) loaded();
 });
+// Loaded paused, nothing moves by itself: show the player.
+player.addEventListener(Event.PAUSE, () => { if (loading) loaded(); });
+// Never stuck behind the loading screen.
+player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => setTimeout(() => { if (loading) loaded(); }, 15000));
 player.addEventListener(Event.MEDIA_FINISHED, showHome);
 player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
   showPrompt(null);
