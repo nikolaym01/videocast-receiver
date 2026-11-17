@@ -36,6 +36,7 @@ cast-media-player {
 }
 
 #idle.instant,
+#idle.instant.hidden,
 #idle.instant .home,
 #idle.instant .loading {
   transition: none;
