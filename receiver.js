@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "7";
+const RECEIVER_VERSION = "8";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -145,15 +145,26 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PLAY, (request)
 // MARK: Holding ‖ fast-forwards
 
 // The first ‖ pauses as usual. Held on, the remote repeats it ~3 times a second: after about a second each
-// repeat adds time, faster the longer it's held (5 s, then 10 s after 3 s, then 20 s after 8 s), shown on
-// screen. On release the film jumps there once (a converted stream restarts on every seek, so not on each
-// repeat) and plays on. Held past the end, VideoCast goes on to the next episode, or near the end of a film.
+// repeat adds time, faster the longer it's held (5 s, then 10 s after 3 s, then 20 s after 8 s). Meanwhile the
+// screen shows the timeline with where the film will land and a frame from there (VideoCast makes them). On
+// release the film jumps there once (a converted stream restarts on every seek, so not on each repeat) and
+// plays on. Held past the end, it lands on the last seconds, so the end is seen; VideoCast then goes on to
+// the next episode as at any end.
 const HOLD_REPEATS_BEFORE_SEEKING = 3;
+const END_SECONDS_SHOWN = 8;
 let pauseRepeats = 0;
 let lastPause = 0;
 let holdStarted = 0;
 let holdSeconds = 0;
 let holdTimer = null;
+let frameTimer = null;
+let thumbnails = null;
+
+const seekbar = document.getElementById("seekbar");
+const seekFrame = document.getElementById("seek-frame");
+const seekTimes = document.getElementById("seek-times");
+const seekPlayed = document.getElementById("seek-played");
+const seekTarget = document.getElementById("seek-target");
 
 function holdStep(heldFor) {
   if (heldFor < 3000) return 5;
@@ -161,9 +172,48 @@ function holdStep(heldFor) {
   return 20;
 }
 
-function formatSkip(seconds) {
-  if (seconds < 60) return `+${seconds} s`;
-  return `+${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+function clock(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor(total / 60) % 60;
+  const s = String(total % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+/** Where a fast-forward of `seconds` lands: never past the last few seconds. */
+function landing(seconds) {
+  const media = player.getMediaInformation();
+  const duration = media && media.duration;
+  const target = player.getCurrentTimeSec() + seconds;
+  return duration ? Math.min(target, Math.max(0, duration - END_SECONDS_SHOWN)) : target;
+}
+
+function showSeekbar(seconds) {
+  const media = player.getMediaInformation();
+  const duration = media && media.duration;
+  const now = player.getCurrentTimeSec();
+  const target = landing(seconds);
+  seekTimes.textContent = duration ? `${clock(target)} / ${clock(duration)}` : clock(target);
+  if (duration) {
+    seekPlayed.style.width = `${(now / duration) * 100}%`;
+    seekTarget.style.left = `${(target / duration) * 100}%`;
+    seekFrame.style.left = `${Math.min(Math.max((target / duration) * 100, 12), 88)}%`;
+  }
+  seekbar.classList.add("shown");
+  // A frame from there, at most twice a second, rounded to 5 s so they're reused.
+  if (thumbnails && !frameTimer) {
+    frameTimer = setTimeout(() => {
+      frameTimer = null;
+      seekFrame.src = `${thumbnails}t${Math.round(landing(holdSeconds) / 5) * 5}.jpg`;
+    }, 400);
+  }
+}
+
+function hideSeekbar() {
+  seekbar.classList.remove("shown");
+  clearTimeout(frameTimer);
+  frameTimer = null;
+  setTimeout(() => seekFrame.removeAttribute("src"), 300);
 }
 
 player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request) => {
@@ -179,20 +229,15 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request
   pauseRepeats += 1;
   if (pauseRepeats > HOLD_REPEATS_BEFORE_SEEKING) {
     holdSeconds += holdStep(now - holdStarted);
-    showPrompt(`⏩ ${formatSkip(holdSeconds)}`);
+    showSeekbar(holdSeconds);
     clearTimeout(holdTimer);
     holdTimer = setTimeout(() => {
-      const media = player.getMediaInformation();
-      const duration = media && media.duration;
-      const target = player.getCurrentTimeSec() + holdSeconds;
-      const pastEnd = Boolean(duration) && target >= duration - 3;
-      report("remote", { action: "fast-forward", seconds: holdSeconds, to: target, pastEnd });
+      const target = landing(holdSeconds);
+      report("remote", { action: "fast-forward", seconds: holdSeconds, to: target });
       holdSeconds = 0;
-      setTimeout(() => showPrompt(null), 800);
-      // Past the end VideoCast decides: the next episode, or near the end of a film.
-      if (pastEnd) return;
       player.seek(target);
       player.play();
+      setTimeout(hideSeekbar, 600);
     }, 700);
   }
   return null;
@@ -207,6 +252,8 @@ player.addEventListener(Event.MEDIA_FINISHED, () => {
 });
 player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
   showPrompt(null);
+  const custom = request.media && request.media.customData;
+  thumbnails = (custom && custom.thumbnails) || null;
   const title = request.media && request.media.metadata && request.media.metadata.title;
   idleDetail.textContent = title ? `${title}…` : "";
   // A picture (VideoCast's preview frame) shows on the player itself.

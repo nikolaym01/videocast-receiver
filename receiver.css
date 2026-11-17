@@ -55,6 +55,69 @@ cast-media-player {
   color: #666;
 }
 
+/* Fast-forward with ‖ held: the film's timeline, where it will land and a frame from there. */
+#seekbar {
+  position: absolute;
+  left: 64px;
+  right: 64px;
+  bottom: 48px;
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+}
+
+#seekbar.shown {
+  opacity: 1;
+}
+
+#seek-frame {
+  position: absolute;
+  bottom: 54px;
+  width: 320px;
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+  transform: translateX(-50%);
+  background: #111;
+}
+
+#seek-frame:not([src]) {
+  display: none;
+}
+
+#seek-times {
+  margin-bottom: 10px;
+  text-align: center;
+  font-size: 26px;
+  color: #eee;
+  text-shadow: 0 1px 4px #000;
+}
+
+#seek-track {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+#seek-played {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+#seek-target {
+  position: absolute;
+  top: -7px;
+  width: 4px;
+  height: 20px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: #4a90d9;
+}
+
 /* "Next episode — press ▶": bottom right, over the film. */
 #prompt {
   position: absolute;
