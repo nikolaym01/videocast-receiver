@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "17";
+const RECEIVER_VERSION = "18";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -379,7 +379,24 @@ function checkMoving() {
 player.addEventListener(Event.TIME_UPDATE, checkMoving);
 setInterval(checkMoving, 250);
 // Loaded paused, nothing moves by itself: show the player.
-player.addEventListener(Event.PAUSE, () => loaded("paused"));
+player.addEventListener(Event.PAUSE, () => { if (!startPaused) loaded("paused"); });
+
+// Resuming mid-film, CAF starts playing at once and only then seeks there: the old Chromecast played the sound
+// ~2 s before the first picture (2026-11-18). So such a load starts paused and plays once the seek is done and
+// the picture can play; at worst after 4 s.
+let startPaused = false;
+let startTimer = null;
+function startNow(why) {
+  if (!startPaused) return;
+  startPaused = false;
+  clearTimeout(startTimer);
+  report("event", { event: "START_AFTER_SEEK", why, mediaTime: player.getCurrentTimeSec() });
+  player.play();
+}
+player.addEventListener(Event.CAN_PLAY, () => { if (startPaused) setTimeout(() => startNow("canplay"), 100); });
+player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => {
+  if (startPaused) startTimer = setTimeout(() => startNow("timeout"), 4000);
+});
 // Never stuck behind the loading screen.
 player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => setTimeout(() => loaded("timeout"), 15000));
 player.addEventListener(Event.MEDIA_FINISHED, showHome);
@@ -390,6 +407,8 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request)
   rewoundOnLoad = (custom && custom.rewound) || 0;
   introEnd = custom && typeof custom.introEnd === "number" ? custom.introEnd : null;
   pausedAt = 0;
+  startPaused = (request.currentTime || 0) > 1 && request.autoplay !== false;
+  if (startPaused) request.autoplay = false;
   const title = request.media && request.media.metadata && request.media.metadata.title;
   // A picture (VideoCast's preview frame while converting) shows on the player itself.
   if (request.media && /^image\//.test(request.media.contentType || "")) {
