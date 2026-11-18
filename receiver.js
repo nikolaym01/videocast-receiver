@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "19";
+const RECEIVER_VERSION = "20";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -170,24 +170,37 @@ function rewoundNote(seconds) {
 player.addEventListener(Event.PAUSE, () => { pausedAt = Date.now(); });
 player.addEventListener(Event.PLAYING, () => { pausedAt = 0; });
 
-/** On ▶ after a long pause: step back first. */
+/** On ▶ after a long pause: step back first, still paused, and play once the seek is done (true if so).
+ * Seeking while play starts made the old Chromecast run sound ~2 s behind the picture until the next load
+ * (2026-11-19, "Кит", after an 8.7-minute pause: PLAY and SEEK 19 ms apart), as at the start (receiver 18). */
+let pickUpTimer = 0;
 function pickUp() {
-  if (!pausedAt) return;
+  if (!pausedAt) return false;
   const back = stepBack(Date.now() - pausedAt);
   pausedAt = 0;
   const now = player.getCurrentTimeSec();
   let target = Math.max(0, now - back);
   if (introEnd !== null && now >= introEnd && target < introEnd - 2) target = Math.min(now, introEnd - 2);
   const seconds = Math.round(now - target);
-  if (seconds < 1) return;
+  if (seconds < 1) return false;
   report("remote", { action: "pick-up", seconds });
+  pickUpTimer = setTimeout(pickedUp, 4000);
   player.seek(target);
   showNote(rewoundNote(seconds));
+  return true;
 }
+
+function pickedUp() {
+  if (!pickUpTimer) return;
+  clearTimeout(pickUpTimer);
+  pickUpTimer = 0;
+  setTimeout(() => player.play(), 200);
+}
+player.addEventListener(Event.SEEKED, () => pickedUp());
 
 player.setMessageInterceptor(cast.framework.messages.MessageType.PLAY, (request) => {
   const state = player.getPlayerState();
-  if (state === cast.framework.messages.PlayerState.PAUSED) pickUp();
+  if (state === cast.framework.messages.PlayerState.PAUSED && pickUp()) return null;
   if (state !== cast.framework.messages.PlayerState.PLAYING) return request;
   const now = Date.now();
   if (now - lastGoOn > 1500) {
