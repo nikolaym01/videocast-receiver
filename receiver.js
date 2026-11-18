@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "21";
+const RECEIVER_VERSION = "22";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -72,7 +72,13 @@ function watchFrames() {
     avProbe = "error: " + error.message;
   }
 }
+// Checked over DevTools on our Chromecast (Chrome 90, CrKey 1.56) on 2026-11-19: the shadow root is open and the
+// callback exists, but it never fires while the film plays (the video goes to a hardware plane, past the page's
+// compositor). So the probe reports that instead of a number; our own <video> would not change it.
 function avOffsetMs() {
+  if (avProbe === "ok" && avSamples.length === 0 && avVideo && !avVideo.paused && avVideo.currentTime > 0) {
+    avProbe = "no frame callbacks (hardware video plane)";
+  }
   if (avSamples.length < 10) return null;
   const sorted = avSamples.slice().sort((a, b) => a - b);
   return Math.round(sorted[Math.floor(sorted.length / 2)] * 1000);
