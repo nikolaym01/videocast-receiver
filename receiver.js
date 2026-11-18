@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "22";
+const RECEIVER_VERSION = "23";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -109,7 +109,9 @@ setInterval(() => {
 }, STATS_EVERY_MS);
 
 const Event = cast.framework.events.EventType;
-for (const type of [Event.BUFFERING, Event.ERROR, Event.MEDIA_FINISHED, Event.SEEKING, Event.SEEKED, Event.REQUEST_LOAD]) {
+// TIME_DRIFTED: CAF's reported time doesn't match what state and rate predict (added 2026-11-19, looking for
+// what goes wrong when sound and picture part).
+for (const type of [Event.BUFFERING, Event.ERROR, Event.MEDIA_FINISHED, Event.SEEKING, Event.SEEKED, Event.REQUEST_LOAD, Event.TIME_DRIFTED].filter(Boolean)) {
   player.addEventListener(type, (event) => {
     const detail = {};
     if (event.isBuffering !== undefined) detail.buffering = event.isBuffering;
