@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "20";
+const RECEIVER_VERSION = "21";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -35,7 +35,51 @@ function report(type, data) {
   }
 }
 
+// MARK: Picture against sound
+// The <video>'s clock follows the sound; requestVideoFrameCallback says which frame is actually shown. Their
+// difference is how far the picture is behind the sound (positive) or ahead (negative), sent with the stats.
+// Added 2026-11-19 after the sound ran ~2 s behind on "Кит" and nothing in the stats showed it. The video
+// belongs to Google's <cast-media-player>; if its shadow root is closed or the old Chromecast lacks the
+// callback, avProbe says so and there is no number (then it waits for our own <video>).
+let avVideo = null;
+let avSamples = [];
+let avProbe = "not started";
+function findVideo() {
+  const direct = document.querySelector("video");
+  if (direct) return direct;
+  const host = document.querySelector("cast-media-player");
+  if (!host) return null;
+  if (!host.shadowRoot) { avProbe = "closed shadow root"; return null; }
+  return host.shadowRoot.querySelector("video");
+}
+function watchFrames() {
+  try {
+    const video = findVideo();
+    if (!video) { if (avProbe === "not started") avProbe = "no video element"; return; }
+    if (!video.requestVideoFrameCallback) { avProbe = "no requestVideoFrameCallback"; return; }
+    if (video === avVideo) return;
+    avVideo = video;
+    avProbe = "ok";
+    const onFrame = (now, frame) => {
+      if (!video.paused && !video.seeking) {
+        avSamples.push(video.currentTime - frame.mediaTime);
+        if (avSamples.length > 120) avSamples.shift();
+      }
+      video.requestVideoFrameCallback(onFrame);
+    };
+    video.requestVideoFrameCallback(onFrame);
+  } catch (error) {
+    avProbe = "error: " + error.message;
+  }
+}
+function avOffsetMs() {
+  if (avSamples.length < 10) return null;
+  const sorted = avSamples.slice().sort((a, b) => a - b);
+  return Math.round(sorted[Math.floor(sorted.length / 2)] * 1000);
+}
+
 function snapshot() {
+  watchFrames();
   const stats = player.getStats ? player.getStats() : {};
   const media = player.getMediaInformation();
   return {
@@ -49,6 +93,8 @@ function snapshot() {
     width: stats.width,
     height: stats.height,
     bandwidth: stats.estimatedBandwidth,
+    avProbe,
+    avOffsetMs: avOffsetMs(),
   };
 }
 
@@ -168,6 +214,9 @@ function rewoundNote(seconds) {
 }
 
 player.addEventListener(Event.PAUSE, () => { pausedAt = Date.now(); });
+player.addEventListener(Event.SEEKING, () => { avSamples = []; });
+player.addEventListener(Event.REQUEST_LOAD, () => { avSamples = []; });
+player.addEventListener(Event.PLAYING, () => watchFrames());
 player.addEventListener(Event.PLAYING, () => { pausedAt = 0; });
 
 /** On ▶ after a long pause: step back first, still paused, and play once the seek is done (true if so).
