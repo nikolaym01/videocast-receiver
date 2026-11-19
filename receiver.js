@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "23";
+const RECEIVER_VERSION = "24";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -517,5 +517,36 @@ context.addCustomMessageListener(NAMESPACE, (message) => {
   }
 });
 
-context.addEventListener(cast.framework.system.EventType.READY, () => report("ready", { version: RECEIVER_VERSION, errors: startupErrors }));
+// MARK: What this device plays
+// Asked of the device itself at start and sent with "ready", so VideoCast keeps a profile of it (REFACTORING.md
+// §3) instead of constants. canDisplayType also knows what the TV behind it takes (AC3/E-AC3 passthrough). Added
+// in receiver 24.
+const CANDIDATES = {
+  "h264-1080p": ["video/mp4", "avc1.640028", 1920, 1080, 30],
+  "h264-1080p60": ["video/mp4", "avc1.64002A", 1920, 1080, 60],
+  "h264-2160p": ["video/mp4", "avc1.640033", 3840, 2160, 30],
+  "hevc-1080p": ["video/mp4", "hev1.1.6.L120.90", 1920, 1080, 30],
+  "hevc-2160p": ["video/mp4", "hev1.1.6.L150.90", 3840, 2160, 30],
+  "hevc-10bit": ["video/mp4", "hev1.2.4.L120.90", 1920, 1080, 30],
+  "vp9-1080p": ["video/webm", "vp09.00.40.08", 1920, 1080, 30],
+  "av1-1080p": ["video/mp4", "av01.0.08M.08", 1920, 1080, 30],
+  "aac": ["audio/mp4", "mp4a.40.2"],
+  "ac3": ["audio/mp4", "ac-3"],
+  "eac3": ["audio/mp4", "ec-3"],
+  "opus": ["audio/webm", "opus"],
+  "flac": ["audio/mp4", "flac"],
+};
+function capabilities() {
+  const result = {};
+  for (const [name, [mime, codec, width, height, rate]] of Object.entries(CANDIDATES)) {
+    try {
+      result[name] = width ? context.canDisplayType(mime, codec, width, height, rate) : context.canDisplayType(mime, codec);
+    } catch (error) {
+      result[name] = null;
+    }
+  }
+  return result;
+}
+
+context.addEventListener(cast.framework.system.EventType.READY, () => report("ready", { version: RECEIVER_VERSION, errors: startupErrors, capabilities: capabilities() }));
 context.start(options);
