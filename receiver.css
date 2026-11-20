@@ -157,12 +157,16 @@ html, body {
   right: 64px;
   bottom: 48px;
   opacity: 0;
-  transition: opacity 0.25s;
+  visibility: hidden;
+  transition: opacity 0.25s, visibility 0s linear 0.25s;
   pointer-events: none;
 }
 
+/* Hidden layers out of the picture, not just transparent (see #idle.hidden). */
 #seekbar.shown {
   opacity: 1;
+  visibility: visible;
+  transition: opacity 0.25s;
 }
 
 /* Darkens the bottom of the screen under the timeline. */
@@ -183,7 +187,8 @@ html, body {
 
 #seek-frame {
   position: absolute;
-  bottom: 54px;
+  /* Above the title, the time and the track. */
+  bottom: 104px;
   width: 320px;
   border-radius: 6px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
@@ -192,6 +197,21 @@ html, body {
 }
 
 #seek-frame:not([src]) {
+  display: none;
+}
+
+/* The film's title over the time, as on the loading screen but smaller. */
+#seek-title {
+  margin-bottom: 6px;
+  text-align: center;
+  font-family: "Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 30px;
+  font-weight: 500;
+  color: #f2f2f2;
+  text-shadow: 0 1px 6px #000;
+}
+
+#seek-title:empty {
   display: none;
 }
 
@@ -208,6 +228,32 @@ html, body {
   height: 6px;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.25);
+}
+
+/* The intro as a lighter band and the chapters as small gaps in the track, over the played part. */
+#seek-marks {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+#seek-marks .intro {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+#seek-marks .chapter {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  margin-left: -1px;
+  background: rgba(0, 0, 0, 0.85);
 }
 
 #seek-played {
@@ -274,4 +320,43 @@ html, body {
 
 #prompt.plain {
   padding: 12px 24px;
+}
+
+/* Buffering: a small quiet spinner in the middle, ours instead of Google's (shown only after 0.6 s of standing
+   still). A plain rotating ring: cheap for the old Chromecast. */
+#spinner {
+  position: absolute;
+  z-index: 1001;
+  left: 50%;
+  top: 50%;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  box-sizing: border-box;
+  border: 4px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s, visibility 0s linear 0.3s;
+  pointer-events: none;
+}
+
+#spinner.shown {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.3s;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* "Can't play this file" under the name on the home screen. */
+#idle .error {
+  min-height: 34px;
+  font-family: "Google Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 26px;
+  color: #c8c8c8;
 }

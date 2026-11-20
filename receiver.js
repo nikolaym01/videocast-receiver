@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "26";
+const RECEIVER_VERSION = "27";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -207,7 +207,6 @@ function showPrompt(text, action) {
 // After a long pause, or resuming a film the next day, a few seconds are played again so the scene is fresh
 // (VideoCast steps back on resume, we on unpausing), and a quiet note says so, so it doesn't look like a fault.
 let pausedAt = 0;
-let introEnd = null;
 let noteTimer = null;
 
 function stepBack(pause) {
@@ -250,6 +249,7 @@ function pickUp() {
   if (seconds < 1) return false;
   report("remote", { action: "pick-up", seconds });
   pickUpTimer = setTimeout(pickedUp, 4000);
+  ownSeek = true;
   player.seek(target);
   showNote(rewoundNote(seconds));
   return true;
@@ -267,6 +267,9 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PLAY, (request)
   const state = player.getPlayerState();
   if (state === cast.framework.messages.PlayerState.PAUSED && pickUp()) return null;
   if (state !== cast.framework.messages.PlayerState.PLAYING) return request;
+  // VideoCast's own ▶ (an agent's resume, the panel) while playing does nothing: only the remote's means "go on"
+  // (code review, 2026-11-18: an agent's resume skipped the intro or went to the next episode).
+  if (request.customData && request.customData.from === "videocast") return null;
   const now = Date.now();
   if (now - lastGoOn > 1500) {
     report("remote", { action: promptAction || "next", prompted: Boolean(promptAction) });
@@ -276,38 +279,37 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PLAY, (request)
   return null;
 });
 
-// MARK: Holding ‖ fast-forwards
+// MARK: Our timeline
 
-// The first ‖ pauses as usual. Held on, the remote repeats it ~3 times a second: after about a second each
-// repeat adds time, faster the longer it's held (5 s, then 10 s after 3 s, then 20 s after 8 s). Meanwhile the
-// screen shows the timeline with where the film will land and a frame from there (VideoCast makes them). On
-// release the film jumps there once (a converted stream restarts on every seek, so not on each repeat) and
-// plays on, from the frame that was on screen when the button was let go (the time keeps counting while the
-// frame loads, and a release is only noticed when the repeats stop). Held past the end, it lands on the last seconds, so the end is seen; VideoCast then goes on to
-// the next episode as at any end.
-const HOLD_REPEATS_BEFORE_SEEKING = 3;
-const END_SECONDS_SHOWN = 8;
-let pauseRepeats = 0;
-let lastPause = 0;
-let holdStarted = 0;
-let holdSeconds = 0;
-let holdTimer = null;
-let frameTimer = null;
-let thumbnails = null;
-let frameTime = null;   // the film time of the frame on screen
-
+// One timeline for everything (ROADMAP, "Our own on-screen interface", step 2): the film's title, the time, the
+// played part, the intro and chapter marks, and in turn
+// - "paused": where the film stopped, after a moment (a quick ‖ ▶ doesn't flash it), for as long as it's paused;
+// - "holding": the ‖-hold fast-forward below, with where it will land and a frame from there;
+// - "jump": a seek from the Mac or Skip intro, with the target and a frame, until a moment after it's done.
+// Not over our loading screen. The TV is an LCD, so a paused card left on doesn't burn in.
 const seekbar = document.getElementById("seekbar");
 const seekFrame = document.getElementById("seek-frame");
 const seekTimes = document.getElementById("seek-times");
+const seekTrack = document.getElementById("seek-track");
 const seekPlayed = document.getElementById("seek-played");
 const seekTarget = document.getElementById("seek-target");
-seekFrame.addEventListener("load", () => { frameTime = Number(seekFrame.dataset.time); });
+const seekTitle = document.createElement("div");
+seekTitle.id = "seek-title";
+seekTimes.before(seekTitle);
+const seekMarks = document.createElement("div");
+seekMarks.id = "seek-marks";
+seekTrack.prepend(seekMarks);
 
-function holdStep(heldFor) {
-  if (heldFor < 3000) return 5;
-  if (heldFor < 8000) return 10;
-  return 20;
-}
+let thumbnails = null;
+let filmTitle = "";
+let chapters = [];      // chapter starts in seconds, from VideoCast
+let introStart = null;
+let introEnd = null;
+let frameTime = null;   // the film time of the frame on screen
+let frameTimer = null;
+let hideTimer = null;
+// Only while the bar is up: a frame arriving after it hid would steer the next hold's landing.
+seekFrame.addEventListener("load", () => { if (seekbar.classList.contains("shown")) frameTime = Number(seekFrame.dataset.time); });
 
 function clock(seconds) {
   const total = Math.max(0, Math.round(seconds));
@@ -317,73 +319,152 @@ function clock(seconds) {
   return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
 
-/** Where a fast-forward of `seconds` lands: never past the last few seconds. */
-function landing(seconds) {
+function filmDuration() {
   const media = player.getMediaInformation();
-  const duration = media && media.duration;
-  const target = player.getCurrentTimeSec() + seconds;
-  return duration ? Math.min(target, Math.max(0, duration - END_SECONDS_SHOWN)) : target;
+  return (media && media.duration) || null;
 }
 
-function showSeekbar(seconds) {
-  const media = player.getMediaInformation();
-  const duration = media && media.duration;
-  const now = player.getCurrentTimeSec();
-  const target = landing(seconds);
-  seekTimes.textContent = duration ? `${clock(target)} / ${clock(duration)}` : clock(target);
-  if (duration) {
-    seekPlayed.style.width = `${(now / duration) * 100}%`;
-    seekTarget.style.left = `${(target / duration) * 100}%`;
+/** "Chapter 3 of 12" for a time, when the film has chapters. */
+function chapterLabel(time) {
+  if (chapters.length < 2) return "";
+  let index = 0;
+  chapters.forEach((start, i) => { if (start <= time + 0.5) index = i; });
+  return `Chapter ${index + 1} of ${chapters.length}`;
+}
+
+/** The intro as a band and the chapters as ticks, drawn once per film. */
+function drawMarks(duration) {
+  seekMarks.replaceChildren();
+  if (!duration) return;
+  const percent = (time) => `${Math.min(Math.max(time / duration, 0), 1) * 100}%`;
+  if (introStart !== null && introEnd !== null && introEnd > introStart) {
+    const band = document.createElement("div");
+    band.className = "intro";
+    band.style.left = percent(introStart);
+    band.style.width = `${((introEnd - introStart) / duration) * 100}%`;
+    seekMarks.append(band);
+  }
+  for (const start of chapters) {
+    if (start < 1 || start > duration - 1) continue;
+    const tick = document.createElement("div");
+    tick.className = "chapter";
+    tick.style.left = percent(start);
+    seekMarks.append(tick);
+  }
+}
+
+/** Draws the timeline in `mode` at `time` (where the film is), with `target` where it goes (or null). */
+function showBar(mode, time, target) {
+  clearTimeout(hideTimer);
+  const duration = filmDuration();
+  const shown = target === null ? time : target;
+  seekTitle.textContent = filmTitle;
+  const chapter = chapterLabel(shown);
+  seekTimes.textContent = (duration ? `${clock(shown)} / ${clock(duration)}` : clock(shown)) + (chapter ? ` · ${chapter}` : "");
+  seekPlayed.style.width = duration ? `${Math.min(time / duration, 1) * 100}%` : "0";
+  if (duration && target !== null) {
+    seekTarget.style.left = `${Math.min(target / duration, 1) * 100}%`;
     seekFrame.style.left = `${Math.min(Math.max((target / duration) * 100, 12), 88)}%`;
   }
-  seekbar.classList.remove("paused");
-  seekbar.classList.add("shown");
-  // A frame from there, at most four times a second, rounded to 5 s so they're reused.
-  if (thumbnails && !frameTimer) {
-    frameTimer = setTimeout(() => {
-      frameTimer = null;
-      const time = Math.round(landing(holdSeconds) / 5) * 5;
-      seekFrame.dataset.time = time;
-      seekFrame.src = `${thumbnails}t${time}.jpg`;
-    }, 250);
-  }
+  seekbar.className = `shown ${mode}`;
 }
 
-function hideSeekbar() {
-  seekbar.classList.remove("shown");
+/** A frame from `time`, at most four times a second, rounded to 5 s so they're reused. */
+function showFrame(time) {
+  if (!thumbnails || frameTimer) return;
+  frameTimer = setTimeout(() => {
+    frameTimer = null;
+    const at = Math.round((typeof time === "function" ? time() : time) / 5) * 5;
+    seekFrame.dataset.time = at;
+    seekFrame.src = `${thumbnails}t${at}.jpg`;
+  }, 250);
+}
+
+function hideBar() {
+  clearTimeout(hideTimer);
   clearTimeout(frameTimer);
   frameTimer = null;
   frameTime = null;
-  setTimeout(() => seekFrame.removeAttribute("src"), 300);
+  seekbar.classList.remove("shown");
+  setTimeout(() => { if (!seekbar.classList.contains("shown")) seekFrame.removeAttribute("src"); }, 300);
+}
+
+/** Our own screens are up (loading, home, an error): nothing goes over them. */
+function screenUp() {
+  return loading || startPaused || !idle.classList.contains("hidden");
 }
 
 // MARK: Paused
 
-// A stopgap until the pause screen of step 2: the same timeline, at where the film stopped, after a moment (a
-// quick ‖ ▶ doesn't flash it). Not over our loading screen, and the fast-forward takes the bar over.
 let pausedTimer = null;
 function showPaused() {
   clearTimeout(pausedTimer);
   pausedTimer = setTimeout(() => {
     if (player.getPlayerState() !== cast.framework.messages.PlayerState.PAUSED) return;
-    if (loading || startPaused || holdSeconds || !idle.classList.contains("hidden")) return;
-    const media = player.getMediaInformation();
-    const duration = media && media.duration;
-    const now = player.getCurrentTimeSec();
-    seekTimes.textContent = duration ? `${clock(now)} / ${clock(duration)}` : clock(now);
-    seekPlayed.style.width = duration ? `${(now / duration) * 100}%` : "0";
-    seekbar.classList.add("paused", "shown");
+    if (screenUp() || holdSeconds || seekbar.classList.contains("jump")) return;
+    showBar("paused", player.getCurrentTimeSec(), null);
   }, 600);
 }
 function hidePaused() {
   clearTimeout(pausedTimer);
-  if (seekbar.classList.contains("paused")) seekbar.classList.remove("shown", "paused");
+  if (seekbar.classList.contains("paused")) hideBar();
 }
 player.addEventListener(Event.PAUSE, showPaused);
 player.addEventListener(Event.PLAYING, hidePaused);
-player.addEventListener(Event.SEEKING, hidePaused);
-player.addEventListener(Event.REQUEST_LOAD, hidePaused);
-player.addEventListener(Event.MEDIA_FINISHED, hidePaused);
+player.addEventListener(Event.REQUEST_LOAD, () => { clearTimeout(pausedTimer); hideBar(); });
+player.addEventListener(Event.MEDIA_FINISHED, () => { clearTimeout(pausedTimer); hideBar(); });
+
+// MARK: Seeks from the Mac and Skip intro
+
+// Our own seeks (the fast-forward, picking up after a break, the start mid-film) show their own way.
+let ownSeek = false;
+player.addEventListener(Event.SEEKING, (event) => {
+  clearTimeout(pausedTimer);
+  // Picking up after a break steps back: the paused time would contradict the note.
+  if (ownSeek && pickUpTimer) hidePaused();
+  if (ownSeek || holdSeconds || screenUp()) return;
+  const target = typeof event.currentMediaTime === "number" ? event.currentMediaTime : player.getCurrentTimeSec();
+  showBar("jump", target, target);
+  showFrame(target);
+});
+player.addEventListener(Event.SEEKED, () => {
+  ownSeek = false;
+  if (!seekbar.classList.contains("jump")) return;
+  hideTimer = setTimeout(() => {
+    hideBar();
+    if (player.getPlayerState() === cast.framework.messages.PlayerState.PAUSED) showPaused();
+  }, 1500);
+});
+
+// MARK: Holding ‖ fast-forwards
+
+// The first ‖ pauses as usual. Held on, the remote repeats it ~3 times a second: after about a second each
+// repeat adds time, faster the longer it's held (5 s, then 10 s after 3 s, then 20 s after 8 s). Meanwhile the
+// timeline shows where the film will land and a frame from there (VideoCast makes them). On release the film
+// jumps there once (a converted stream restarts on every seek, so not on each repeat) and plays on, from the
+// frame that was on screen when the button was let go (the time keeps counting while the frame loads, and a
+// release is only noticed when the repeats stop). Held past the end, it lands on the last seconds, so the end is
+// seen; VideoCast then goes on to the next episode as at any end.
+const HOLD_REPEATS_BEFORE_SEEKING = 3;
+const END_SECONDS_SHOWN = 8;
+let pauseRepeats = 0;
+let lastPause = 0;
+let holdStarted = 0;
+let holdSeconds = 0;
+let holdTimer = null;
+
+function holdStep(heldFor) {
+  if (heldFor < 3000) return 5;
+  if (heldFor < 8000) return 10;
+  return 20;
+}
+
+/** Where a fast-forward of `seconds` lands: never past the last few seconds. */
+function landing(seconds) {
+  const duration = filmDuration();
+  const target = player.getCurrentTimeSec() + seconds;
+  return duration ? Math.min(target, Math.max(0, duration - END_SECONDS_SHOWN)) : target;
+}
 
 player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request) => {
   const now = Date.now();
@@ -398,28 +479,53 @@ player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request
   pauseRepeats += 1;
   if (pauseRepeats > HOLD_REPEATS_BEFORE_SEEKING) {
     holdSeconds += holdStep(now - holdStarted);
-    showSeekbar(holdSeconds);
+    clearTimeout(pausedTimer);
+    showBar("holding", player.getCurrentTimeSec(), landing(holdSeconds));
+    showFrame(() => landing(holdSeconds));
     clearTimeout(holdTimer);
     holdTimer = setTimeout(() => {
       const seen = frameTime !== null && frameTime > player.getCurrentTimeSec() ? frameTime : null;
       const target = seen !== null ? Math.min(seen, landing(holdSeconds)) : landing(holdSeconds);
       report("remote", { action: "fast-forward", seconds: holdSeconds, to: target });
       holdSeconds = 0;
+      ownSeek = true;
       player.seek(target);
       player.play();
-      setTimeout(hideSeekbar, 600);
+      hideTimer = setTimeout(hideBar, 600);
     }, 550);
   }
   return null;
 });
 
+// MARK: Buffering
+
+// A small quiet spinner instead of Google's, only when the film should play but its time has stood still for
+// 0.6 s: short stalls stay invisible. CAF pauses the element itself while it buffers, so the player's state says
+// whether the film should play, its clock whether it does.
+const spinner = document.createElement("div");
+spinner.id = "spinner";
+document.body.append(spinner);
+let lastClock = null;
+let stillSince = 0;
+setInterval(() => {
+  const state = player.getPlayerState();
+  const States = cast.framework.messages.PlayerState;
+  const shouldPlay = state === States.PLAYING || state === States.BUFFERING;
+  const time = player.getCurrentTimeSec();
+  const now = Date.now();
+  if (!shouldPlay || screenUp() || time !== lastClock) stillSince = now;
+  lastClock = time;
+  spinner.classList.toggle("shown", now - stillSince >= 600);
+}, 250);
+
 // MARK: Idle and loading screens
 
 // Built here rather than in index.html, which the Chromecast caches: "home" (the app's icon and name, drifting a
 // little every 30 s so a screen left on doesn't burn in) and "loading" (a dimmed frame from where the film will
-// start, its title and what's happening, with a running line).
+// start, its title and what's happening, with a running line). An error shows on the home screen as one short
+// line instead of Google's error screen; the details go to the Mac.
 idle.innerHTML = `
-  <div class="home"><img class="logo" src="icon.png?v=${RECEIVER_VERSION}" alt=""><div class="name">VideoCast</div></div>
+  <div class="home"><img class="logo" src="icon.png?v=${RECEIVER_VERSION}" alt=""><div class="name">VideoCast</div><div class="error"></div></div>
   <div class="loading">
     <div class="backdrop"></div>
     <div class="caption"><div class="title"></div><div class="detail"></div><div class="running"><div></div></div></div>
@@ -429,9 +535,26 @@ const home = idle.querySelector(".home");
 const backdrop = idle.querySelector(".backdrop");
 const loadingTitle = idle.querySelector(".title");
 const loadingDetail = idle.querySelector(".detail");
+const errorLine = idle.querySelector(".error");
 
 function showHome() {
   idle.className = "mode-home";
+  errorLine.textContent = "";
+}
+
+/** The film can't play: back to the home screen with a line that says so, until the next load. */
+function showError(why) {
+  if (idle.className === "mode-home" && errorLine.textContent) return;
+  clearLoadTimers();
+  loading = false;
+  startPaused = false;
+  showingPicture = false;
+  clearTimeout(pausedTimer);
+  hideBar();
+  showPrompt(null);
+  showHome();
+  errorLine.textContent = "Can't play this file";
+  report("event", { event: "ERROR_SHOWN", why });
 }
 
 function showLoading(title, startTime, detail) {
@@ -449,8 +572,9 @@ setInterval(() => {
 
 showHome();
 // The loading screen stays until the picture really moves: resuming, CAF loads from the start, reports PLAYING,
-// then seeks and buffers again, and hiding earlier showed Google's spinner and bar in between. So it goes once the
-// film's time has run on for a moment while playing.
+// then seeks and buffers again, and hiding earlier showed a spinner and the bar in between. So it goes once the
+// film's time has run on for a moment while playing. VideoCast's still picture (while it converts) never moves
+// and keeps the screen up until the stream comes.
 let rewoundOnLoad = 0;
 let loading = false;
 let loadingFrom = null;
@@ -471,7 +595,7 @@ player.addEventListener(Event.SEEKING, () => { loadingFrom = null; });
 // The player's own clock (the event's field isn't filled on every device), checked on its time updates and
 // four times a second besides; the state isn't checked: sound already plays while CAF still says BUFFERING.
 function checkMoving() {
-  if (!loading) return;
+  if (!loading || showingPicture) return;
   const time = player.getCurrentTimeSec();
   if (typeof time !== "number" || isNaN(time)) return;
   if (loadingFrom === null) loadingFrom = time;
@@ -487,7 +611,19 @@ player.addEventListener(Event.PAUSE, () => { if (!startPaused && !showingPicture
 // worst after 4 s) the loading screen goes, the frame at the spot shows, and then it plays.
 let startPaused = false;
 let startTimer = null;
+let loadTimer = null;
 let showingPicture = false;
+/** A new load (or an error) cancels what an earlier one armed: its fallbacks could hide the next one's screen
+ * early or play before its seek (code review, 2026-11-18). */
+function clearLoadTimers() {
+  clearTimeout(startTimer);
+  clearTimeout(loadTimer);
+  clearTimeout(pickUpTimer);
+  clearTimeout(holdTimer);
+  pickUpTimer = 0;
+  holdSeconds = 0;
+  ownSeek = false;
+}
 function startNow(why) {
   if (!startPaused) return;
   startPaused = false;
@@ -503,22 +639,55 @@ player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => {
   if (startPaused) startTimer = setTimeout(() => startNow("timeout"), 4000);
 });
 // Never stuck behind the loading screen.
-player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => setTimeout(() => { if (!showingPicture) loaded("timeout"); }, 15000));
-// Only a real end: replacing the media (VideoCast's preview picture by the stream) "finishes" it too.
+player.addEventListener(Event.PLAYER_LOAD_COMPLETE, () => {
+  clearTimeout(loadTimer);
+  loadTimer = setTimeout(() => { if (!showingPicture) loaded("timeout"); }, 15000);
+});
+// Only a real end: replacing the media (VideoCast's preview picture by the stream) "finishes" it too. An error
+// ends it as well.
 player.addEventListener(Event.MEDIA_FINISHED, (event) => {
-  if (event && event.endedReason && event.endedReason !== "END_OF_STREAM") return;
+  const reason = event && event.endedReason;
+  if (reason === "ERROR") return showError("finished with an error");
+  if (reason && reason !== "END_OF_STREAM") return;
   showHome();
 });
+// CAF reports errors it recovers from too (a segment fetched again): only one that leaves nothing playing counts.
+// Tied to the load it came in: an error of the outgoing media (replaced by the stream or the next episode) must
+// not stop the new one; nor counts the interruption itself, or VideoCast's still picture.
+let loadGeneration = 0;
+player.addEventListener(Event.ERROR, (event) => {
+  const Codes = cast.framework.events.DetailedErrorCode || {};
+  const code = event && event.detailedErrorCode;
+  if (code !== undefined && (code === Codes.LOAD_INTERRUPTED || code === Codes.LOAD_CANCELLED)) return;
+  const generation = loadGeneration;
+  setTimeout(() => {
+    if (generation !== loadGeneration || showingPicture) return;
+    // The loading screen was up (a load that failed) or a film was on (it failed while playing).
+    if (player.getPlayerState() === cast.framework.messages.PlayerState.IDLE && (loading || idle.classList.contains("mode-loading") || player.getMediaInformation())) {
+      showError("error, player idle");
+    }
+  }, 1000);
+});
 player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
+  loadGeneration += 1;
+  clearLoadTimers();
+  // The screen of an earlier load (VideoCast's still picture) waits for this one's PLAYER_LOAD_COMPLETE: until
+  // then CAF's clock jumping to the start point would read as the film moving.
+  loading = false;
+  loadingFrom = null;
   showPrompt(null);
   const custom = request.media && request.media.customData;
   thumbnails = (custom && custom.thumbnails) || null;
   rewoundOnLoad = (custom && custom.rewound) || 0;
   introEnd = custom && typeof custom.introEnd === "number" ? custom.introEnd : null;
+  introStart = custom && typeof custom.introStart === "number" ? custom.introStart : null;
+  chapters = custom && Array.isArray(custom.chapters) ? custom.chapters.filter((t) => typeof t === "number") : [];
   pausedAt = 0;
   startPaused = (request.currentTime || 0) > 1 && request.autoplay !== false;
   if (startPaused) request.autoplay = false;
   const title = request.media && request.media.metadata && request.media.metadata.title;
+  filmTitle = title || "";
+  drawMarks(request.media && request.media.duration);
   // A picture is VideoCast's stand-in while it converts the film: our loading screen says so instead, until the
   // stream comes.
   showingPicture = Boolean(request.media && /^image\//.test(request.media.contentType || ""));
