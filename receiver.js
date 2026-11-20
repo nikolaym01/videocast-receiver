@@ -1,15 +1,25 @@
-// VideoCast's Cast receiver: Google's player (CAF) with a faster start, a quiet idle screen and
-// diagnostics sent back to the Mac. VideoCast loads media with the same LOAD/SEEK messages as on the
+// VideoCast's Cast receiver: Google's player framework (CAF) playing into our own <video>, with a faster start,
+// our own screens and diagnostics sent back to the Mac. VideoCast loads media with the same LOAD/SEEK messages as on the
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "24";
+const RECEIVER_VERSION = "25";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
 const player = context.getPlayerManager();
 const logger = cast.debug.CastDebugLogger.getInstance();
 const idle = document.getElementById("idle");
+
+// Our own <video> instead of Google's <cast-media-player> (ROADMAP, "Our own on-screen interface", step 1,
+// receiver 25): CAF keeps its protocol (LOAD / SEEK / status, so VideoCast doesn't change) but draws nothing of
+// its own; pause, buffering and errors are ours to show. index.html is cached by the Chromecast, so an old copy
+// may still hold Google's element: it goes before CAF starts.
+for (const old of document.querySelectorAll("cast-media-player")) old.remove();
+const video = document.createElement("video");
+video.id = "film";
+document.body.prepend(video);
+player.setMediaElement(video);
 
 
 // Start playing once a few seconds are buffered (the default waits far longer on HLS).
@@ -38,19 +48,13 @@ function report(type, data) {
 // MARK: Picture against sound
 // The <video>'s clock follows the sound; requestVideoFrameCallback says which frame is actually shown. Their
 // difference is how far the picture is behind the sound (positive) or ahead (negative), sent with the stats.
-// Added 2026-11-19 after the sound ran ~2 s behind on "Кит" and nothing in the stats showed it. The video
-// belongs to Google's <cast-media-player>; if its shadow root is closed or the old Chromecast lacks the
-// callback, avProbe says so and there is no number (then it waits for our own <video>).
+// Added 2026-11-19 after the sound ran ~2 s behind on "Кит" and nothing in the stats showed it. If the old
+// Chromecast lacks the callback or never calls it, avProbe says so and there is no number.
 let avVideo = null;
 let avSamples = [];
 let avProbe = "not started";
 function findVideo() {
-  const direct = document.querySelector("video");
-  if (direct) return direct;
-  const host = document.querySelector("cast-media-player");
-  if (!host) return null;
-  if (!host.shadowRoot) { avProbe = "closed shadow root"; return null; }
-  return host.shadowRoot.querySelector("video");
+  return video;
 }
 function watchFrames() {
   try {
@@ -74,7 +78,7 @@ function watchFrames() {
 }
 // Checked over DevTools on our Chromecast (Chrome 90, CrKey 1.56) on 2026-11-19: the shadow root is open and the
 // callback exists, but it never fires while the film plays (the video goes to a hardware plane, past the page's
-// compositor). So the probe reports that instead of a number; our own <video> would not change it.
+// compositor). So the probe reports that instead of a number; our own <video> doesn't change that.
 function avOffsetMs() {
   if (avProbe === "ok" && avSamples.length === 0 && avVideo && !avVideo.paused && avVideo.currentTime > 0) {
     avProbe = "no frame callbacks (hardware video plane)";
@@ -293,7 +297,6 @@ const seekFrame = document.getElementById("seek-frame");
 const seekTimes = document.getElementById("seek-times");
 const seekPlayed = document.getElementById("seek-played");
 const seekTarget = document.getElementById("seek-target");
-const castPlayer = document.querySelector("cast-media-player");
 seekFrame.addEventListener("load", () => { frameTime = Number(seekFrame.dataset.time); });
 
 function holdStep(heldFor) {
@@ -329,9 +332,8 @@ function showSeekbar(seconds) {
     seekTarget.style.left = `${(target / duration) * 100}%`;
     seekFrame.style.left = `${Math.min(Math.max((target / duration) * 100, 12), 88)}%`;
   }
+  seekbar.classList.remove("paused");
   seekbar.classList.add("shown");
-  // Google's own paused bar would show under ours.
-  castPlayer.classList.add("seeking");
   // A frame from there, at most four times a second, rounded to 5 s so they're reused.
   if (thumbnails && !frameTimer) {
     frameTimer = setTimeout(() => {
@@ -348,11 +350,36 @@ function hideSeekbar() {
   clearTimeout(frameTimer);
   frameTimer = null;
   frameTime = null;
-  setTimeout(() => {
-    seekFrame.removeAttribute("src");
-    castPlayer.classList.remove("seeking");
-  }, 300);
+  setTimeout(() => seekFrame.removeAttribute("src"), 300);
 }
+
+// MARK: Paused
+
+// A stopgap until the pause screen of step 2: the same timeline, at where the film stopped, after a moment (a
+// quick ‖ ▶ doesn't flash it). Not over our loading screen, and the fast-forward takes the bar over.
+let pausedTimer = null;
+function showPaused() {
+  clearTimeout(pausedTimer);
+  pausedTimer = setTimeout(() => {
+    if (player.getPlayerState() !== cast.framework.messages.PlayerState.PAUSED) return;
+    if (loading || startPaused || holdSeconds || !idle.classList.contains("hidden")) return;
+    const media = player.getMediaInformation();
+    const duration = media && media.duration;
+    const now = player.getCurrentTimeSec();
+    seekTimes.textContent = duration ? `${clock(now)} / ${clock(duration)}` : clock(now);
+    seekPlayed.style.width = duration ? `${(now / duration) * 100}%` : "0";
+    seekbar.classList.add("paused", "shown");
+  }, 600);
+}
+function hidePaused() {
+  clearTimeout(pausedTimer);
+  if (seekbar.classList.contains("paused")) seekbar.classList.remove("shown", "paused");
+}
+player.addEventListener(Event.PAUSE, showPaused);
+player.addEventListener(Event.PLAYING, hidePaused);
+player.addEventListener(Event.SEEKING, hidePaused);
+player.addEventListener(Event.REQUEST_LOAD, hidePaused);
+player.addEventListener(Event.MEDIA_FINISHED, hidePaused);
 
 player.setMessageInterceptor(cast.framework.messages.MessageType.PAUSE, (request) => {
   const now = Date.now();

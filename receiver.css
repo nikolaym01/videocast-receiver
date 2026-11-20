@@ -7,13 +7,14 @@ html, body {
   overflow: hidden;
 }
 
-cast-media-player {
-  /* Google's player, restyled: no splash logo, a quiet progress bar. */
-  --splash-image: none;
-  --logo-image: none;
-  --background-color: #000;
-  --progress-color: #4a90d9;
-  --font-family: "Helvetica Neue", Arial, sans-serif;
+/* Our own video element (receiver 25): CAF plays into it and draws nothing over it. */
+#film {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
 }
 
 /* Shown until media loads and after it ends, instead of Google's backdrop. */
@@ -164,7 +165,7 @@ cast-media-player {
   opacity: 1;
 }
 
-/* Darkens the bottom of the screen, where Google's paused overlay sits. */
+/* Darkens the bottom of the screen under the timeline. */
 #seekbar::before {
   content: "";
   position: fixed;
@@ -176,8 +177,8 @@ cast-media-player {
   background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.92) 55%);
 }
 
-cast-media-player.seeking {
-  --progress-color: transparent;
+#seekbar.paused #seek-target {
+  display: none;
 }
 
 #seek-frame {
