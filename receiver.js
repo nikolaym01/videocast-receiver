@@ -3,7 +3,7 @@
 // Default Media Receiver, so nothing changes on the sender side.
 
 const NAMESPACE = "urn:x-cast:com.videocast";
-const RECEIVER_VERSION = "25";
+const RECEIVER_VERSION = "26";
 const STATS_EVERY_MS = 10000;
 
 const context = cast.framework.CastReceiverContext.getInstance();
@@ -18,6 +18,10 @@ const idle = document.getElementById("idle");
 for (const old of document.querySelectorAll("cast-media-player")) old.remove();
 const video = document.createElement("video");
 video.id = "film";
+// Load at once, also paused: a start mid-film loads paused and seeks first, and with the default preload Chrome
+// suspended the paused player, so that seek never finished (receiver 25, tv-check 2026-11-20 19:01: no SEEKED,
+// no sound until a pause and ▶). Google's element loads the same way.
+video.preload = "auto";
 document.body.prepend(video);
 player.setMediaElement(video);
 
